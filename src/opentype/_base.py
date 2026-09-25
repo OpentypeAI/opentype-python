@@ -156,13 +156,6 @@ class _BaseClient:
         return idempotent or method.upper() in ("GET", "HEAD", "PUT", "DELETE")
 
     @staticmethod
-    def _next_key(current: Optional[str], caller_key: bool) -> Optional[str]:
-        # A 5xx may leave a failed run under the key; a new key is a new attempt.
-        if current is None or caller_key:
-            return current
-        return str(uuid.uuid4())
-
-    @staticmethod
     def _raise_for(response: httpx.Response, body_text: Optional[str] = None) -> None:
         if response.status_code >= 400:
             raise error_from_response(response, body_text)
@@ -220,7 +213,6 @@ class SyncAPIClient(_BaseClient):
 
         ``idempotency_key``: ``NOT_GIVEN`` means the request carries none; ``None``
         means generate one; a string is the caller's own key."""
-        caller_key = isinstance(idempotency_key, str)
         key: Optional[str]
         if isinstance(idempotency_key, _Unset):
             key = None
@@ -262,13 +254,11 @@ class SyncAPIClient(_BaseClient):
                         may_retry
                         and attempt < self.max_retries
                         and _retryable_status(response)
-                        and not (caller_key and key is not None)
-                        and err.code != "verdict_schema_violation"
+                        and key is None  # a paid POST answered: it may already be charged
                     ):
                         delay = retry_delay(attempt, response)
                         response.close()
                         self._sleep(delay)
-                        key = self._next_key(key, caller_key)
                         attempt += 1
                         continue
                     raise err
@@ -332,7 +322,6 @@ class AsyncAPIClient(_BaseClient):
         timeout: Union[float, httpx.Timeout, None] = None,
         stream: bool = False,
     ) -> AsyncIterator[httpx.Response]:
-        caller_key = isinstance(idempotency_key, str)
         key: Optional[str]
         if isinstance(idempotency_key, _Unset):
             key = None
@@ -374,13 +363,11 @@ class AsyncAPIClient(_BaseClient):
                         may_retry
                         and attempt < self.max_retries
                         and _retryable_status(response)
-                        and not (caller_key and key is not None)
-                        and err.code != "verdict_schema_violation"
+                        and key is None  # a paid POST answered: it may already be charged
                     ):
                         delay = retry_delay(attempt, response)
                         await response.aclose()
                         await self._sleep(delay)
-                        key = self._next_key(key, caller_key)
                         attempt += 1
                         continue
                     raise err

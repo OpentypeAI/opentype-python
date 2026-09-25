@@ -3,13 +3,13 @@
 Typed sync and async client for the [OpenType](https://opentype.dev) API: decisions,
 verdicts, run streaming, usage, billing, keys and the model router.
 
+Not on PyPI yet. Until the first release, install from GitHub:
+
 ```bash
-pip install opentype
+pip install git+https://github.com/OpentypeAI/opentype-python
 ```
 
-Python 3.9+. Dependencies: `httpx`, `pydantic` v2.
-
-> Not on PyPI yet. Until the first release: `pip install git+https://github.com/OpentypeAI/opentype-python`.
+Once released, this becomes `pip install opentype`. Python 3.9+. Dependencies: `httpx`, `pydantic` v2.
 
 Docs: https://docs.opentype.dev. Create an API key at https://console.opentype.dev/keys and export it as `OPENTYPE_API_KEY`.
 
@@ -118,7 +118,8 @@ The response also carries `threshold` (`q_star`, `r`, `tau`), `filters_applied`,
 `input_tokens_est`, `catalog_as_of`, `benchmarks_as_of`, `replayed` and the classification `run_id`.
 
 The router only selects; it does not proxy the call. Classification is done by Neon 1.1 and billed
-like a decision run; `select` is never auto-retried.
+like a decision run. `select` sends an `Idempotency-Key` (pass `idempotency_key=` to choose it), so a
+retry after a lost response replays the stored classification instead of paying twice.
 
 Long context: decisions and router tasks accept up to 262,144 input tokens and 4 MiB bodies. The
 decision deadline defaults to 30 s plus 120 s per 256k input tokens, capped at 150 s; the client's
@@ -150,11 +151,11 @@ OpenType(
 
 ## Retries and idempotency
 
-- Every `runs.create` (and `decide` / `verdict`) sends an `Idempotency-Key`: yours if you pass
-  `idempotency_key=`, otherwise a fresh UUID per call.
+- Every paid call (`runs.create`, `decide`, `verdict`, `router.select`) sends an `Idempotency-Key`:
+  yours if you pass `idempotency_key=`, otherwise a fresh UUID per call.
 - No response (network error, timeout): retried with the **same** key, so the run is never duplicated.
-- 500 / 502 / 503 / 504: retried with a **new** key (a generated key only; a key you pass is never
-  swapped, so such errors surface to you).
+- A 5xx on a paid call is **not** retried: the call behind it may already have been charged. Send it
+  again with a new key if you want a new attempt. Reads (`GET`) are retried on 5xx.
 - 4xx, including 402 and 429, is never retried.
 - Backoff: 1, 2, 4 s with full jitter, or the server's `Retry-After`.
 - A `202` replay of a run still in flight raises `RunPendingError` (`err.run` has the run): poll it

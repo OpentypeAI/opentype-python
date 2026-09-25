@@ -303,7 +303,7 @@ def test_router(client: OpenType) -> None:
     assert top.weaknesses[0].gap_to_best == -0.05 and top.imputed[0].from_ == "gpqa"
     assert r.threshold is not None and r.threshold.tau == 0.765 and r.run_id == "run_1"
     assert body(sel) == {"prompt": "fix this bug", "policy": "cost_efficient", "models": {"open_weights": True}}
-    assert "idempotency-key" not in sel.calls.last.request.headers
+    assert sel.calls.last.request.headers["idempotency-key"]
     assert [m.id for m in client.router.models().models] == ["m1", "m2"]
     with pytest.raises(ValueError):
         client.router.select()

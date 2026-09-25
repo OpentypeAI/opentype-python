@@ -36,18 +36,22 @@ def test_network_error_retries_with_same_key(client: OpenType) -> None:
 
 
 @respx.mock
-def test_5xx_retries_with_new_key(client: OpenType, _no_sleep: list[float]) -> None:
-    route = respx.post(f"{BASE}/v1/runs").mock(
-        side_effect=[
-            httpx.Response(503, json=err("provider_unavailable")),
-            httpx.Response(500, json=err("internal")),
-            httpx.Response(200, json=run_json()),
-        ]
+def test_5xx_on_paid_create_is_not_retried(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/runs").mock(return_value=httpx.Response(503, json=err("provider_unavailable")))
+    with pytest.raises(ServerError):
+        client.runs.create(DECISION)
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_router_select_reuses_key_after_network_error(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/router/select").mock(
+        side_effect=[httpx.ConnectError("x"), httpx.Response(500, json=err("internal"))]
     )
-    client.runs.create(DECISION)
+    with pytest.raises(ServerError):
+        client.router.select(prompt="p")
     k = keys(route)
-    assert len(k) == 3 and len(set(k)) == 3
-    assert len(_no_sleep) == 2 and all(0 <= d <= 2 for d in _no_sleep)
+    assert len(k) == 2 and len(set(k)) == 1
 
 
 @respx.mock
@@ -60,9 +64,9 @@ def test_5xx_with_caller_key_is_not_retried(client: OpenType) -> None:
 
 @respx.mock
 def test_5xx_exhausts_retries(client: OpenType) -> None:
-    route = respx.post(f"{BASE}/v1/runs").mock(return_value=httpx.Response(504, json=err("deadline_exceeded")))
+    route = respx.get(f"{BASE}/v1/runs/run_1").mock(return_value=httpx.Response(504, json=err("deadline_exceeded")))
     with pytest.raises(ServerError) as exc:
-        client.runs.create(DECISION)
+        client.runs.get("run_1")
     assert route.call_count == 3 and exc.value.code == "deadline_exceeded"
 
 
@@ -140,7 +144,7 @@ def test_max_retries_zero_and_timeout() -> None:
 
 
 @respx.mock
-async def test_async_same_key_then_new_key(aclient: AsyncOpenType) -> None:
+async def test_async_same_key_then_no_5xx_retry(aclient: AsyncOpenType) -> None:
     route = respx.post(f"{BASE}/v1/runs").mock(
         side_effect=[
             httpx.ConnectError("x"),
@@ -148,9 +152,10 @@ async def test_async_same_key_then_new_key(aclient: AsyncOpenType) -> None:
             httpx.Response(200, json=run_json()),
         ]
     )
-    await aclient.runs.create(DECISION)
+    with pytest.raises(ServerError):
+        await aclient.runs.create(DECISION)
     k = keys(route)
-    assert k[0] == k[1] and k[2] != k[1]
+    assert len(k) == 2 and k[0] == k[1]
 
 
 @respx.mock

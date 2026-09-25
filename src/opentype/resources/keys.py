@@ -22,11 +22,13 @@ class Keys(SyncResource):
         return self._client._request(KeyResponse, "GET", f"/v1/keys/{key_id}")
 
     def revoke(self, key_id: str) -> KeyResponse:
-        """Idempotent: revoking a revoked key returns it unchanged."""
+        """Console-session only: an API-key caller gets ``PermissionDeniedError``.
+        Idempotent: revoking a revoked key returns it unchanged."""
         return self._client._request(KeyResponse, "DELETE", f"/v1/keys/{key_id}")
 
     def rotate(self, key_id: str) -> KeyWithSecretResponse:
-        """New secret, shown once. Not retried: a lost response means rotate again."""
+        """Console-session only: an API-key caller gets ``PermissionDeniedError``.
+        New secret, shown once. Not retried: a lost response means rotate again."""
         return self._client._request(KeyWithSecretResponse, "POST", f"/v1/keys/{key_id}/rotate")
 
     def create(self, *, name: str, scopes: Sequence[str], principal: Optional[Any] = None) -> KeyWithSecretResponse:
