@@ -63,7 +63,7 @@ class Runs(SyncResource):
         ) as response:
             try:
                 yield from iter_events(response.iter_text())
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
+            except (httpx.TimeoutException, httpx.TransportError, httpx.DecodingError) as exc:
                 raise transport_error(exc) from exc
 
     def wait_for(self, run_id: str, *, timeout: float = 170.0, poll_interval: float = 1.0) -> RunResponse:
@@ -116,7 +116,7 @@ class AsyncRuns(AsyncResource):
             try:
                 async for event in aiter_events(response.aiter_text()):
                     yield event
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
+            except (httpx.TimeoutException, httpx.TransportError, httpx.DecodingError) as exc:
                 raise transport_error(exc) from exc
 
     async def wait_for(self, run_id: str, *, timeout: float = 170.0, poll_interval: float = 1.0) -> RunResponse:

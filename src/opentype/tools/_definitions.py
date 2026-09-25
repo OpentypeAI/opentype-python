@@ -269,7 +269,8 @@ class ToolSet:
         from .._exceptions import OpenTypeError
 
         if name not in TOOLS_BY_NAME:
-            raise KeyError(f"unknown tool {name!r}")
+            # An answer, not an exception: the adapter must still send a tool result for this call.
+            return json.dumps({"error": {"code": "unknown_tool", "message": f"unknown tool {name!r}"}})
         try:
             if isinstance(args, str):
                 args = json.loads(args)

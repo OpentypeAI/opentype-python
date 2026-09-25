@@ -250,3 +250,18 @@ def test_non_json_answer_to_paid_call_carries_its_key(client: OpenType) -> None:
 def test_malformed_retry_after_is_ignored(value: str) -> None:
     response = httpx.Response(503, headers={"retry-after": value})
     assert 0 <= retry_delay(0, response) <= 1.0
+
+
+class _NotGzip(httpx.SyncByteStream):
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        yield b"not gzip"
+
+
+@respx.mock
+def test_body_decoding_error_carries_the_key(client: OpenType) -> None:
+    respx.post(f"{BASE}/v1/runs").mock(
+        side_effect=lambda req: httpx.Response(200, headers={"content-encoding": "gzip"}, stream=_NotGzip())
+    )
+    with pytest.raises(APIConnectionError) as info:
+        client.runs.create(DECISION, idempotency_key="k5")
+    assert info.value.idempotency_key == "k5"

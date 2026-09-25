@@ -127,8 +127,10 @@ def test_usage_include_quota(client: OpenType) -> None:
 
 
 def test_unknown_tool(client: OpenType) -> None:
+    out = json.loads(openai_tools(client).handle("nope", {}))
+    assert out["error"]["code"] == "unknown_tool"
     with pytest.raises(KeyError):
-        openai_tools(client).handle("nope", {})
+        openai_tools(client).call("nope", {})
 
 
 def test_lazy_client(monkeypatch: pytest.MonkeyPatch) -> None:

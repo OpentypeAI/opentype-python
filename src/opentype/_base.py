@@ -284,7 +284,7 @@ class SyncAPIClient(_BaseClient):
                 if not stream:
                     try:
                         response.read()
-                    except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    except (httpx.TimeoutException, httpx.TransportError, httpx.DecodingError) as exc:
                         # Headers came, the body did not: as ambiguous as no response.
                         if may_retry and attempt < self.max_retries:
                             response.close()
@@ -409,7 +409,7 @@ class AsyncAPIClient(_BaseClient):
                 if not stream:
                     try:
                         await response.aread()
-                    except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    except (httpx.TimeoutException, httpx.TransportError, httpx.DecodingError) as exc:
                         if may_retry and attempt < self.max_retries:
                             await response.aclose()
                             await self._sleep(retry_delay(attempt, None))
