@@ -1,0 +1,47 @@
+name: Release
+
+# Builds and publishes `opentype` to PyPI on a v* tag with PyPI trusted publishing (OIDC).
+# No PyPI token is stored anywhere. Fails at the upload step until the owner registers
+# the pending publisher on pypi.org (see README).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - name: Check tag matches package version
+        run: |
+          v=$(uv run python -c "import opentype; print(opentype.__version__)")
+          [ "$v" = "${GITHUB_REF_NAME#v}" ] || { echo "package is $v, tag is $GITHUB_REF_NAME"; exit 1; }
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/opentype
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
