@@ -204,3 +204,49 @@ async def test_async_router_select_reuses_key_and_skips_5xx(aclient: AsyncOpenTy
         await aclient.route("p")
     k = keys(route)
     assert len(k) == 2 and k[0] == k[1] == exc.value.idempotency_key
+
+
+class _Broken(httpx.SyncByteStream):
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        yield b'{"run_id":'
+        raise httpx.ReadTimeout("body stalled")
+
+
+class _ABroken(httpx.AsyncByteStream):
+    async def __aiter__(self):  # type: ignore[no-untyped-def]
+        yield b'{"run_id":'
+        raise httpx.RemoteProtocolError("peer closed")
+
+
+@respx.mock
+def test_body_timeout_retries_with_same_key_then_exposes_it(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/runs").mock(side_effect=lambda req: httpx.Response(200, stream=_Broken()))
+    with pytest.raises(APITimeoutError) as info:
+        client.runs.create(DECISION)
+    k = keys(route)
+    assert len(k) == client.max_retries + 1 and len(set(k)) == 1
+    assert info.value.idempotency_key == k[0]
+
+
+@respx.mock
+async def test_async_body_drop_retries_with_same_key(aclient: AsyncOpenType) -> None:
+    route = respx.post(f"{BASE}/v1/runs").mock(side_effect=lambda req: httpx.Response(200, stream=_ABroken()))
+    with pytest.raises(APIConnectionError) as info:
+        await aclient.runs.create(DECISION)
+    k = keys(route)
+    assert len(set(k)) == 1 and info.value.idempotency_key == k[0]
+
+
+@respx.mock
+def test_non_json_answer_to_paid_call_carries_its_key(client: OpenType) -> None:
+    respx.post(f"{BASE}/v1/runs").mock(return_value=httpx.Response(200, text="<html>"))
+    with pytest.raises(OpenTypeError) as info:
+        client.runs.create(DECISION, idempotency_key="k9")
+    assert info.value.code == "invalid_response"
+    assert info.value.idempotency_key == "k9"
+
+
+@pytest.mark.parametrize("value", ["soon", "Mon, 01 Jan 2024 00:00:00"])
+def test_malformed_retry_after_is_ignored(value: str) -> None:
+    response = httpx.Response(503, headers={"retry-after": value})
+    assert 0 <= retry_delay(0, response) <= 1.0

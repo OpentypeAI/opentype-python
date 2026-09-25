@@ -268,10 +268,17 @@ class ToolSet:
     def handle(self, name: str, args: Any = None) -> str:
         from .._exceptions import OpenTypeError
 
-        if isinstance(args, str):
-            args = json.loads(args) if args.strip() else {}
+        if name not in TOOLS_BY_NAME:
+            raise KeyError(f"unknown tool {name!r}")
         try:
+            if isinstance(args, str):
+                args = json.loads(args)
+            if args is not None and not isinstance(args, Mapping):
+                raise TypeError("tool arguments must be a JSON object")
             return json.dumps(self.call(name, args))
+        except (ValueError, TypeError, KeyError) as exc:
+            # Malformed model arguments answer the tool call instead of ending the agent loop.
+            return json.dumps({"error": {"code": "invalid_arguments", "message": str(exc)}})
         except OpenTypeError as exc:
             return json.dumps(
                 {

@@ -108,3 +108,20 @@ class _AChunks(httpx.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         for p in self.parts:
             yield p.encode()
+
+
+class _Dropped(httpx.SyncByteStream):
+    def __iter__(self) -> Iterator[bytes]:
+        yield STATE.encode()
+        raise httpx.RemoteProtocolError("peer closed")
+
+
+@respx.mock
+def test_dropped_stream_raises_sdk_error_and_wait_for_falls_back(client: OpenType) -> None:
+    from opentype import APIConnectionError
+
+    respx.get(f"{BASE}/v1/runs/run_1/stream").mock(side_effect=lambda req: httpx.Response(200, stream=_Dropped()))
+    respx.get(f"{BASE}/v1/runs/run_1").mock(return_value=httpx.Response(200, json=run_json()))
+    with pytest.raises(APIConnectionError):
+        list(client.runs.stream("run_1"))
+    assert client.runs.wait_for("run_1").state == "completed"

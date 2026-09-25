@@ -202,6 +202,7 @@ from opentype.tools import openai_tools, anthropic_tools
 
 tools = openai_tools(client)
 completion = openai.chat.completions.create(model=..., messages=msgs, tools=tools.definitions)
+msgs.append(completion.choices[0].message)
 for call in completion.choices[0].message.tool_calls or []:
     msgs.append(tools.handle_tool_call(call))   # or tools.handle(name, args) -> JSON string
 

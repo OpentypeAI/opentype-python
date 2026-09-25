@@ -135,3 +135,9 @@ def test_lazy_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENTYPE_API_KEY", "otsk_env")
     t: Any = anthropic_tools()
     assert t.client.api_key == "otsk_env"
+
+
+@pytest.mark.parametrize("args", ["{oops", "[1]", "", '"x"'])
+def test_malformed_arguments_become_a_tool_error(client: OpenType, args: str) -> None:
+    out = json.loads(openai_tools(client).handle("opentype_get_run", args))
+    assert out["error"]["code"] == "invalid_arguments"

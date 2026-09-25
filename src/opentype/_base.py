@@ -64,10 +64,13 @@ def retry_after_seconds(response: Optional[httpx.Response]) -> Optional[float]:
     try:
         return float(raw)
     except ValueError:
-        parsed = email.utils.parsedate_to_datetime(raw) if raw else None
-        if parsed is None:
+        try:
+            parsed = email.utils.parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
             return None
-        return max(0.0, float(parsed.timestamp()) - time.time())
+        if parsed is None or parsed.tzinfo is None:
+            return None
+        return max(0.0, parsed.timestamp() - time.time())
 
 
 def retry_delay(attempt: int, response: Optional[httpx.Response]) -> float:
@@ -84,6 +87,13 @@ E = TypeVar("E", bound=OpenTypeError)
 def _keyed(err: E, key: Optional[str]) -> E:
     err.idempotency_key = key
     return err
+
+
+def transport_error(exc: httpx.HTTPError) -> OpenTypeError:
+    """The SDK error for an httpx failure, including one raised while a body is read."""
+    if isinstance(exc, httpx.TimeoutException):
+        return APITimeoutError()
+    return APIConnectionError(str(exc) or "connection error")
 
 
 def _user_agent() -> str:
@@ -272,8 +282,23 @@ class SyncAPIClient(_BaseClient):
                     err.idempotency_key = key
                     raise err
                 if not stream:
-                    response.read()
-                yield response
+                    try:
+                        response.read()
+                    except (httpx.TimeoutException, httpx.TransportError) as exc:
+                        # Headers came, the body did not: as ambiguous as no response.
+                        if may_retry and attempt < self.max_retries:
+                            response.close()
+                            self._sleep(retry_delay(attempt, None))
+                            attempt += 1
+                            continue
+                        raise _keyed(transport_error(exc), key) from exc
+                try:
+                    yield response
+                except OpenTypeError as err:
+                    # e.g. a 2xx that is not JSON: the call may have been charged.
+                    if err.idempotency_key is None:
+                        err.idempotency_key = key
+                    raise
                 return
             finally:
                 response.close()
@@ -382,8 +407,21 @@ class AsyncAPIClient(_BaseClient):
                     err.idempotency_key = key
                     raise err
                 if not stream:
-                    await response.aread()
-                yield response
+                    try:
+                        await response.aread()
+                    except (httpx.TimeoutException, httpx.TransportError) as exc:
+                        if may_retry and attempt < self.max_retries:
+                            await response.aclose()
+                            await self._sleep(retry_delay(attempt, None))
+                            attempt += 1
+                            continue
+                        raise _keyed(transport_error(exc), key) from exc
+                try:
+                    yield response
+                except OpenTypeError as err:
+                    if err.idempotency_key is None:
+                        err.idempotency_key = key
+                    raise
                 return
             finally:
                 await response.aclose()
