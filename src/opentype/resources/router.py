@@ -79,9 +79,12 @@ class Router(SyncResource):
         max_latency_ms: Optional[float] = None,
         weights: Optional[Weights] = None,
         models: Optional[Filters] = None,
+        idempotency_key: Optional[str] = None,
     ) -> RouterSelectResponse:
         """``POST /v1/router/select``: which model to call for this task. Billed
-        like a decision run (classification by Neon 1.1). Not auto-retried.
+        like a decision run (classification by Neon 1.1). Sends an ``Idempotency-Key``
+        (yours, or a UUID per call) on every attempt, so a retry after a lost response
+        replays the stored classification. A 5xx is not retried.
 
         ``task_type`` skips classification (see :meth:`task_types`) and wins over
         ``domain``. ``latency`` is ``interactive``, ``standard`` or ``batch``.
@@ -99,7 +102,9 @@ class Router(SyncResource):
             max_latency_ms=max_latency_ms,
             weights=weights,
         )
-        return self._client._request(RouterSelectResponse, "POST", "/v1/router/select", body=body)
+        return self._client._request(
+            RouterSelectResponse, "POST", "/v1/router/select", body=body, idempotency_key=idempotency_key
+        )
 
 
 class AsyncRouter(AsyncResource):
@@ -121,6 +126,7 @@ class AsyncRouter(AsyncResource):
         max_latency_ms: Optional[float] = None,
         weights: Optional[Weights] = None,
         models: Optional[Filters] = None,
+        idempotency_key: Optional[str] = None,
     ) -> RouterSelectResponse:
         body = select_body(
             prompt,
@@ -133,4 +139,6 @@ class AsyncRouter(AsyncResource):
             max_latency_ms=max_latency_ms,
             weights=weights,
         )
-        return await self._client._request(RouterSelectResponse, "POST", "/v1/router/select", body=body)
+        return await self._client._request(
+            RouterSelectResponse, "POST", "/v1/router/select", body=body, idempotency_key=idempotency_key
+        )

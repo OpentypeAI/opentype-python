@@ -7,7 +7,7 @@ from typing import Any, Optional, Union
 
 import httpx
 
-from .._base import cast_to, pending_error
+from .._base import cast_to, pending_error, transport_error
 from .._exceptions import APIConnectionError, OpenTypeError
 from .._pagination import AsyncPage, SyncPage
 from .._streaming import aiter_events, iter_events
@@ -61,7 +61,10 @@ class Runs(SyncResource):
         with self._client._send(
             "GET", f"/v1/runs/{run_id}/stream", headers={"Accept": "text/event-stream"}, stream=True
         ) as response:
-            yield from iter_events(response.iter_text())
+            try:
+                yield from iter_events(response.iter_text())
+            except (httpx.TimeoutException, httpx.TransportError, httpx.DecodingError) as exc:
+                raise transport_error(exc) from exc
 
     def wait_for(self, run_id: str, *, timeout: float = 170.0, poll_interval: float = 1.0) -> RunResponse:
         """Block until the run is terminal, then return it with its answer."""
@@ -110,8 +113,11 @@ class AsyncRuns(AsyncResource):
         async with self._client._send(
             "GET", f"/v1/runs/{run_id}/stream", headers={"Accept": "text/event-stream"}, stream=True
         ) as response:
-            async for event in aiter_events(response.aiter_text()):
-                yield event
+            try:
+                async for event in aiter_events(response.aiter_text()):
+                    yield event
+            except (httpx.TimeoutException, httpx.TransportError, httpx.DecodingError) as exc:
+                raise transport_error(exc) from exc
 
     async def wait_for(self, run_id: str, *, timeout: float = 170.0, poll_interval: float = 1.0) -> RunResponse:
         deadline = time.monotonic() + timeout

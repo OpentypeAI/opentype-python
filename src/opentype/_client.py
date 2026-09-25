@@ -169,6 +169,7 @@ class OpenType(SyncAPIClient):
         max_latency_ms: Optional[float] = None,
         weights: Optional[Weights] = None,
         models: Optional[Filters] = None,
+        idempotency_key: Optional[str] = None,
     ) -> RouterSelectResponse:
         """Shorthand for ``router.select``: ``client.route("...").model.id``."""
         return self.router.select(
@@ -181,6 +182,7 @@ class OpenType(SyncAPIClient):
             max_latency_ms=max_latency_ms,
             weights=weights,
             models=models,
+            idempotency_key=idempotency_key,
         )
 
 
@@ -277,6 +279,7 @@ class AsyncOpenType(AsyncAPIClient):
         max_latency_ms: Optional[float] = None,
         weights: Optional[Weights] = None,
         models: Optional[Filters] = None,
+        idempotency_key: Optional[str] = None,
     ) -> RouterSelectResponse:
         return await self.router.select(
             prompt=prompt,
@@ -288,4 +291,5 @@ class AsyncOpenType(AsyncAPIClient):
             max_latency_ms=max_latency_ms,
             weights=weights,
             models=models,
+            idempotency_key=idempotency_key,
         )

@@ -11,6 +11,7 @@ from opentype import (
     InsufficientCreditsError,
     InvalidRequestError,
     OpenType,
+    OpenTypeError,
     RateLimitError,
     ServerError,
 )
@@ -36,18 +37,22 @@ def test_network_error_retries_with_same_key(client: OpenType) -> None:
 
 
 @respx.mock
-def test_5xx_retries_with_new_key(client: OpenType, _no_sleep: list[float]) -> None:
-    route = respx.post(f"{BASE}/v1/runs").mock(
-        side_effect=[
-            httpx.Response(503, json=err("provider_unavailable")),
-            httpx.Response(500, json=err("internal")),
-            httpx.Response(200, json=run_json()),
-        ]
+def test_5xx_on_paid_create_is_not_retried(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/runs").mock(return_value=httpx.Response(503, json=err("provider_unavailable")))
+    with pytest.raises(ServerError):
+        client.runs.create(DECISION)
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_router_select_reuses_key_after_network_error(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/router/select").mock(
+        side_effect=[httpx.ConnectError("x"), httpx.Response(500, json=err("internal"))]
     )
-    client.runs.create(DECISION)
+    with pytest.raises(ServerError):
+        client.router.select(prompt="p")
     k = keys(route)
-    assert len(k) == 3 and len(set(k)) == 3
-    assert len(_no_sleep) == 2 and all(0 <= d <= 2 for d in _no_sleep)
+    assert len(k) == 2 and len(set(k)) == 1
 
 
 @respx.mock
@@ -60,9 +65,9 @@ def test_5xx_with_caller_key_is_not_retried(client: OpenType) -> None:
 
 @respx.mock
 def test_5xx_exhausts_retries(client: OpenType) -> None:
-    route = respx.post(f"{BASE}/v1/runs").mock(return_value=httpx.Response(504, json=err("deadline_exceeded")))
+    route = respx.get(f"{BASE}/v1/runs/run_1").mock(return_value=httpx.Response(504, json=err("deadline_exceeded")))
     with pytest.raises(ServerError) as exc:
-        client.runs.create(DECISION)
+        client.runs.get("run_1")
     assert route.call_count == 3 and exc.value.code == "deadline_exceeded"
 
 
@@ -140,7 +145,7 @@ def test_max_retries_zero_and_timeout() -> None:
 
 
 @respx.mock
-async def test_async_same_key_then_new_key(aclient: AsyncOpenType) -> None:
+async def test_async_same_key_then_no_5xx_retry(aclient: AsyncOpenType) -> None:
     route = respx.post(f"{BASE}/v1/runs").mock(
         side_effect=[
             httpx.ConnectError("x"),
@@ -148,9 +153,10 @@ async def test_async_same_key_then_new_key(aclient: AsyncOpenType) -> None:
             httpx.Response(200, json=run_json()),
         ]
     )
-    await aclient.runs.create(DECISION)
+    with pytest.raises(ServerError):
+        await aclient.runs.create(DECISION)
     k = keys(route)
-    assert k[0] == k[1] and k[2] != k[1]
+    assert len(k) == 2 and k[0] == k[1]
 
 
 @respx.mock
@@ -168,3 +174,94 @@ async def test_async_timeout() -> None:
         with pytest.raises(APITimeoutError):
             await c.billing.get()
     assert respx.calls.call_count == 3
+
+
+@respx.mock
+def test_router_select_sends_caller_key_and_error_carries_it(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/router/select").mock(
+        return_value=httpx.Response(409, json=err("classification_not_ready"))
+    )
+    with pytest.raises(OpenTypeError) as exc:
+        client.route("p", idempotency_key="route-1")
+    assert keys(route) == ["route-1"]
+    assert exc.value.idempotency_key == "route-1"
+
+
+@respx.mock
+def test_generated_key_is_on_the_error(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/runs").mock(return_value=httpx.Response(503, json=err("provider_unavailable")))
+    with pytest.raises(ServerError) as exc:
+        client.runs.create(DECISION)
+    assert exc.value.idempotency_key == keys(route)[0]
+
+
+@respx.mock
+async def test_async_router_select_reuses_key_and_skips_5xx(aclient: AsyncOpenType) -> None:
+    route = respx.post(f"{BASE}/v1/router/select").mock(
+        side_effect=[httpx.ConnectError("x"), httpx.Response(500, json=err("internal"))]
+    )
+    with pytest.raises(ServerError) as exc:
+        await aclient.route("p")
+    k = keys(route)
+    assert len(k) == 2 and k[0] == k[1] == exc.value.idempotency_key
+
+
+class _Broken(httpx.SyncByteStream):
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        yield b'{"run_id":'
+        raise httpx.ReadTimeout("body stalled")
+
+
+class _ABroken(httpx.AsyncByteStream):
+    async def __aiter__(self):  # type: ignore[no-untyped-def]
+        yield b'{"run_id":'
+        raise httpx.RemoteProtocolError("peer closed")
+
+
+@respx.mock
+def test_body_timeout_retries_with_same_key_then_exposes_it(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/runs").mock(side_effect=lambda req: httpx.Response(200, stream=_Broken()))
+    with pytest.raises(APITimeoutError) as info:
+        client.runs.create(DECISION)
+    k = keys(route)
+    assert len(k) == client.max_retries + 1 and len(set(k)) == 1
+    assert info.value.idempotency_key == k[0]
+
+
+@respx.mock
+async def test_async_body_drop_retries_with_same_key(aclient: AsyncOpenType) -> None:
+    route = respx.post(f"{BASE}/v1/runs").mock(side_effect=lambda req: httpx.Response(200, stream=_ABroken()))
+    with pytest.raises(APIConnectionError) as info:
+        await aclient.runs.create(DECISION)
+    k = keys(route)
+    assert len(set(k)) == 1 and info.value.idempotency_key == k[0]
+
+
+@respx.mock
+def test_non_json_answer_to_paid_call_carries_its_key(client: OpenType) -> None:
+    respx.post(f"{BASE}/v1/runs").mock(return_value=httpx.Response(200, text="<html>"))
+    with pytest.raises(OpenTypeError) as info:
+        client.runs.create(DECISION, idempotency_key="k9")
+    assert info.value.code == "invalid_response"
+    assert info.value.idempotency_key == "k9"
+
+
+@pytest.mark.parametrize("value", ["soon", "Mon, 01 Jan 2024 00:00:00"])
+def test_malformed_retry_after_is_ignored(value: str) -> None:
+    response = httpx.Response(503, headers={"retry-after": value})
+    assert 0 <= retry_delay(0, response) <= 1.0
+
+
+class _NotGzip(httpx.SyncByteStream):
+    def __iter__(self):  # type: ignore[no-untyped-def]
+        yield b"not gzip"
+
+
+@respx.mock
+def test_body_decoding_error_carries_the_key(client: OpenType) -> None:
+    respx.post(f"{BASE}/v1/runs").mock(
+        side_effect=lambda req: httpx.Response(200, headers={"content-encoding": "gzip"}, stream=_NotGzip())
+    )
+    with pytest.raises(APIConnectionError) as info:
+        client.runs.create(DECISION, idempotency_key="k5")
+    assert info.value.idempotency_key == "k5"

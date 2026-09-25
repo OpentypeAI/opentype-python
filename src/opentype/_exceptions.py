@@ -32,6 +32,10 @@ class OpenTypeError(Exception):
     request_id: Optional[str]
     status: Optional[int]
     violations: Optional[list[str]]
+    #: The ``Idempotency-Key`` the failed request sent, when it sent one. Send the
+    #: same request again with this key to replay a run or classification that may
+    #: already have been charged instead of paying for a new one.
+    idempotency_key: Optional[str] = None
 
     def __init__(
         self,
