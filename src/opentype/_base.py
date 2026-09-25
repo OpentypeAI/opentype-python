@@ -78,6 +78,14 @@ def retry_delay(attempt: int, response: Optional[httpx.Response]) -> float:
     return random.uniform(0, min(2.0**attempt, 8.0))
 
 
+E = TypeVar("E", bound=OpenTypeError)
+
+
+def _keyed(err: E, key: Optional[str]) -> E:
+    err.idempotency_key = key
+    return err
+
+
 def _user_agent() -> str:
     return f"opentype-python/{__version__} python/{platform.python_version()}"
 
@@ -239,13 +247,13 @@ class SyncAPIClient(_BaseClient):
                     self._sleep(retry_delay(attempt, None))
                     attempt += 1
                     continue
-                raise APITimeoutError() from exc
+                raise _keyed(APITimeoutError(), key) from exc
             except httpx.TransportError as exc:
                 if may_retry and attempt < self.max_retries:
                     self._sleep(retry_delay(attempt, None))
                     attempt += 1
                     continue
-                raise APIConnectionError(str(exc) or "connection error") from exc
+                raise _keyed(APIConnectionError(str(exc) or "connection error"), key) from exc
             try:
                 if response.status_code >= 400:
                     text = response.read().decode("utf-8", "replace")
@@ -261,6 +269,7 @@ class SyncAPIClient(_BaseClient):
                         self._sleep(delay)
                         attempt += 1
                         continue
+                    err.idempotency_key = key
                     raise err
                 if not stream:
                     response.read()
@@ -348,13 +357,13 @@ class AsyncAPIClient(_BaseClient):
                     await self._sleep(retry_delay(attempt, None))
                     attempt += 1
                     continue
-                raise APITimeoutError() from exc
+                raise _keyed(APITimeoutError(), key) from exc
             except httpx.TransportError as exc:
                 if may_retry and attempt < self.max_retries:
                     await self._sleep(retry_delay(attempt, None))
                     attempt += 1
                     continue
-                raise APIConnectionError(str(exc) or "connection error") from exc
+                raise _keyed(APIConnectionError(str(exc) or "connection error"), key) from exc
             try:
                 if response.status_code >= 400:
                     text = (await response.aread()).decode("utf-8", "replace")
@@ -370,6 +379,7 @@ class AsyncAPIClient(_BaseClient):
                         await self._sleep(delay)
                         attempt += 1
                         continue
+                    err.idempotency_key = key
                     raise err
                 if not stream:
                     await response.aread()

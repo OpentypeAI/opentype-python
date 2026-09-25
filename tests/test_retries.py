@@ -11,6 +11,7 @@ from opentype import (
     InsufficientCreditsError,
     InvalidRequestError,
     OpenType,
+    OpenTypeError,
     RateLimitError,
     ServerError,
 )
@@ -173,3 +174,33 @@ async def test_async_timeout() -> None:
         with pytest.raises(APITimeoutError):
             await c.billing.get()
     assert respx.calls.call_count == 3
+
+
+@respx.mock
+def test_router_select_sends_caller_key_and_error_carries_it(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/router/select").mock(
+        return_value=httpx.Response(409, json=err("classification_not_ready"))
+    )
+    with pytest.raises(OpenTypeError) as exc:
+        client.route("p", idempotency_key="route-1")
+    assert keys(route) == ["route-1"]
+    assert exc.value.idempotency_key == "route-1"
+
+
+@respx.mock
+def test_generated_key_is_on_the_error(client: OpenType) -> None:
+    route = respx.post(f"{BASE}/v1/runs").mock(return_value=httpx.Response(503, json=err("provider_unavailable")))
+    with pytest.raises(ServerError) as exc:
+        client.runs.create(DECISION)
+    assert exc.value.idempotency_key == keys(route)[0]
+
+
+@respx.mock
+async def test_async_router_select_reuses_key_and_skips_5xx(aclient: AsyncOpenType) -> None:
+    route = respx.post(f"{BASE}/v1/router/select").mock(
+        side_effect=[httpx.ConnectError("x"), httpx.Response(500, json=err("internal"))]
+    )
+    with pytest.raises(ServerError) as exc:
+        await aclient.route("p")
+    k = keys(route)
+    assert len(k) == 2 and k[0] == k[1] == exc.value.idempotency_key

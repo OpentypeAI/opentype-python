@@ -132,7 +132,7 @@ default 170 s timeout sits above that cap. `POST /v1/runs` responses carry a `Se
 | --- | --- |
 | `client.usage` | `summary`, `daily`, `ledger`, `run(run_id)`, `quota()` |
 | `client.billing` | `get`, `set_auto_recharge`, `checkout`, `portal` |
-| `client.keys` | `list`, `get`, `revoke`, `rotate` (`create` is console-session only) |
+| `client.keys` | `list`, `get` with an API key; `create`, `revoke` and `rotate` need a console session |
 | `client.router` | `select`, `models`, `task_types` |
 
 Every response is a pydantic model; `obj._request_id` holds the `x-request-id`.
@@ -156,6 +156,9 @@ OpenType(
 - No response (network error, timeout): retried with the **same** key, so the run is never duplicated.
 - A 5xx on a paid call is **not** retried: the call behind it may already have been charged. Send it
   again with a new key if you want a new attempt. Reads (`GET`) are retried on 5xx.
+- Every error from a paid call carries the key it sent in `err.idempotency_key`, generated or yours.
+  Sending the same request with that key replays the stored result instead of paying again; a
+  router classification still in progress answers `409 classification_not_ready` until it settles.
 - 4xx, including 402 and 429, is never retried.
 - Backoff: 1, 2, 4 s with full jitter, or the server's `Retry-After`.
 - A `202` replay of a run still in flight raises `RunPendingError` (`err.run` has the run): poll it
