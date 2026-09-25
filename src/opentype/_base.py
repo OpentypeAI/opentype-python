@@ -67,7 +67,7 @@ def retry_after_seconds(response: Optional[httpx.Response]) -> Optional[float]:
         parsed = email.utils.parsedate_to_datetime(raw) if raw else None
         if parsed is None:
             return None
-        return max(0.0, parsed.timestamp() - time.time())
+        return max(0.0, float(parsed.timestamp()) - time.time())
 
 
 def retry_delay(attempt: int, response: Optional[httpx.Response]) -> float:
